@@ -5,6 +5,7 @@ import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
 import java.net.*;
+import java.util.Random;
 
 import static ru.nsu.gorin.networks.udp.Constants.*;
 
@@ -33,10 +34,18 @@ public class Server {
             serverSocket.receive(ack);
             logger.info("Ack received. Starting to receive messages");
 
+            serverSocket.setSoTimeout(CLOSE_TIMEOUT);
             while (true) {
                 byte[] message = new byte[MAX_BUF_SIZE];
                 DatagramPacket segment = new DatagramPacket(message, 0, message.length);
                 serverSocket.receive(segment);
+                boolean isReceived = true;
+
+                Random random = new Random();
+                int randomNum = random.nextInt(5);
+                if (randomNum == CONDITION_OF_FAILURE) {
+                    isReceived = false;
+                }
 
                 int seqMessage = (int) message[0];
                 int ackMessage = (int) message[1];
@@ -49,11 +58,13 @@ public class Server {
 
                 ackBytes = new byte[]{(byte) seqMessage, (byte) ackMessage};
                 ack = new DatagramPacket(ackBytes, ackBytes.length, address, CLIENT_PORT);
-                serverSocket.send(ack);
+                if (isReceived) {
+                    serverSocket.send(ack);
+                }
                 logger.info("Ack sent");
             }
         } catch (IOException ex) {
-            logger.error(ex);
+            logger.info("Server is closing connection by timeout");
         }
     }
 }
