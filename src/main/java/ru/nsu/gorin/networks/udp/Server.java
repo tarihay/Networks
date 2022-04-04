@@ -4,6 +4,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.net.*;
 import java.util.Random;
 
@@ -13,53 +14,61 @@ public class Server {
     private static final Logger logger = LogManager.getLogger(Server.class);
 
     public static void main(String[] args) {
-        logger.info("Server successfully started running");
+        int seq = 0;
+        int ack;
 
         try (DatagramSocket serverSocket = new DatagramSocket(SERVER_PORT)) {
+            logger.info("Server successfully started running");
             InetAddress address = InetAddress.getLocalHost();
 
-            byte[] seq = new byte[SEQ_ACK_SIZE];
-            DatagramPacket syn = new DatagramPacket(seq, 0, seq.length);
+            //Receiving Syn
+            byte[] synBytes = new byte[MAX_BUF_SIZE];
+            DatagramPacket syn = new DatagramPacket(synBytes, 0, synBytes.length);
             serverSocket.receive(syn);
-            logger.info("Syn received successfully");
+            logger.info("SYN received successfully");
 
-            byte ackNum = (byte) (seq[0] + 1);
-            byte[] synAckBytes = {ackNum, 0};
-            DatagramPacket synAck = new DatagramPacket(synAckBytes, synAckBytes.length, address, CLIENT_PORT);
-            serverSocket.send(synAck);
-            logger.info("Syn-Ack sent");
+            //Sending SYN-ACK
+            ack = synBytes[SEQ_POS] + 1;
+            Segment synAckSegment = new Segment("", seq, ack);
+            byte[] synAckBytes = synAckSegment.makeSimpleSegment();
+            DatagramPacket synAckPacket = new DatagramPacket(synAckBytes, synAckBytes.length, address, CLIENT_PORT);
+            serverSocket.send(synAckPacket);
+            logger.info("SYN-ACK sent");
 
-            byte[] ackBytes = new byte[SEQ_ACK_SIZE];
-            DatagramPacket ack = new DatagramPacket(ackBytes, 0, ackBytes.length);
-            serverSocket.receive(ack);
+            //Receiving ACK
+            byte[] ackBytes = new byte[MAX_BUF_SIZE];
+            DatagramPacket ackPacket = new DatagramPacket(ackBytes, 0, ackBytes.length);
+            serverSocket.receive(ackPacket);
             logger.info("Ack received. Starting to receive messages");
 
             serverSocket.setSoTimeout(CLOSE_TIMEOUT);
             while (true) {
                 byte[] message = new byte[MAX_BUF_SIZE];
-                DatagramPacket segment = new DatagramPacket(message, 0, message.length);
-                serverSocket.receive(segment);
+                DatagramPacket receivedPacket = new DatagramPacket(message, 0, message.length);
+                serverSocket.receive(receivedPacket);
                 boolean isReceived = true;
 
+                //Don't receive message by random
                 Random random = new Random();
                 int randomNum = random.nextInt(5);
                 if (randomNum == CONDITION_OF_FAILURE) {
                     isReceived = false;
                 }
 
-                int seqMessage = (int) message[0];
-                int ackMessage = (int) message[1];
-                byte[] buffer = new byte[MAX_BUF_SIZE];
-                System.arraycopy(message, 2, buffer, 0, message.length-2);
-                logger.info("received message number " + seqMessage);
+                //Unzipping received segment
+                Segment receivedSegment = new Segment(message);
+                logger.info("received message number " + receivedSegment.getSeq());
+                System.out.println("seq: " + receivedSegment.getSeq() + ", ack: " + receivedSegment.getAck()
+                        + ", message: " + receivedSegment.getMessage() + "%\n");
 
-                String receivedMessage = new String(buffer, "UTF-8");
-                System.out.println("seq: " + seqMessage + ", ack: " + ackMessage + ", message: " + receivedMessage + "%\n");
+                ack = receivedSegment.getSeq() + 1;
 
-                ackBytes = new byte[]{(byte) seqMessage, (byte) ackMessage};
-                ack = new DatagramPacket(ackBytes, ackBytes.length, address, CLIENT_PORT);
+                //making ack segment
+                Segment ackSegment = new Segment("", seq, ack);
+                ackBytes = ackSegment.makeSimpleSegment();
+                ackPacket = new DatagramPacket(ackBytes, ackBytes.length, address, CLIENT_PORT);
                 if (isReceived) {
-                    serverSocket.send(ack);
+                    serverSocket.send(ackPacket);
                 }
                 logger.info("Ack sent");
             }

@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
-import java.util.HashMap;
 import java.util.Random;
 import java.util.Scanner;
 
@@ -16,89 +15,73 @@ import static ru.nsu.gorin.networks.udp.Constants.*;
 public class Client {
     private static final Logger logger = LogManager.getLogger(Client.class);
 
-    private static final int TIMEOUT_EXIT = 1;
-    private static final int ANOTHER_EXIT = 2;
-
-    private static final int SYN_ACK_SEQ = 1;
-    private static final int SYN_ACK_ACK = 0;
-    private static final int SYN_SEQ = 0;
-
-    public static void main(String[] args) {
-        logger.info("Client successfully started running");
+    public static void main(String[] args) throws Exception {
+        int seq = 0;
+        int ack = 0;
 
         Scanner scanner = new Scanner(System.in);
 
         try (DatagramSocket clientSocket = new DatagramSocket(CLIENT_PORT)) {
+            logger.info("Client successfully started running");
             InetAddress address = InetAddress.getLocalHost();
 
-            int seq = 0;
-            int ack = 0;
-            byte[] mes = {(byte) seq, (byte) ack};
+            //Making SYN and sending it to Server
+            Segment synSegment = new Segment(EMPTY_STRING, seq, ack);
+            byte[] mes = synSegment.makeSimpleSegment();
             DatagramPacket syn = new DatagramPacket(mes, mes.length, address, SERVER_PORT);
             clientSocket.send(syn);
+            logger.info("Client sent SYN");
 
-            byte[] synAckBytes = new byte[SEQ_ACK_SIZE];
+            //Making byte array to receive SYN-ACK from Server
+            byte[] synAckBytes = new byte[MAX_BUF_SIZE];
             DatagramPacket synAck = new DatagramPacket(synAckBytes, 0, synAckBytes.length);
             clientSocket.receive(synAck);
+            logger.info("Client successfully received SYN-ACK");
 
-            if (synAckBytes[SYN_ACK_ACK] == mes[SYN_SEQ] + 1) {
-                seq++;
-                ack++;
-                byte[] ackBytes = {(byte) seq, (byte) ack};
-                DatagramPacket ackSegment = new DatagramPacket(ackBytes, ackBytes.length, address, SERVER_PORT);
-                clientSocket.send(ackSegment);
+            if (synAckBytes[ACK_POS] == mes[SEQ_POS] + 1) {
+                //Making ACK and sending it to Server
+                Segment ackSegment = new Segment(EMPTY_STRING, ++seq, ++ack);
+                byte[] ackBytes = ackSegment.makeSimpleSegment();
+                DatagramPacket ackPacket = new DatagramPacket(ackBytes, ackBytes.length, address, SERVER_PORT);
+                clientSocket.send(ackPacket);
+                logger.info("Client sent ACK");
 
-                String message = null;
+                String message;
                 boolean isSent = false;
 
-                clientSocket.setSoTimeout(CLOSE_TIMEOUT);
+                int sendCount = 0;
+
+                byte[] sendBuffer = new byte[MAX_BUF_SIZE];
                 while (true) {
                     if (!isSent) {
                         message = scanner.nextLine();
-                        byte[] messageBytes = message.getBytes();
 
+                        //building the segment
+                        Segment commonSegment = new Segment(message, ++seq, ++ack);
 
-                        if (messageBytes.length > MAX_BUF_SIZE) {
-                            int additionalSegmentsAmount;
-                            if (messageBytes.length % MAX_BUF_SIZE == 0) {
-                                additionalSegmentsAmount = messageBytes.length / MAX_BUF_SIZE;
-                            }
-                            else {
-                                additionalSegmentsAmount = messageBytes.length / MAX_BUF_SIZE + 1;
-                            }
-                            for (int i = 0; i < additionalSegmentsAmount; i++) {
-                                byte[] messagePart = new byte[MAX_BUF_SIZE];
-                                messagePart[0] = (byte) (++seq);
-                                messagePart[1] = (byte) (++ack);
-                                int messageBytesOffset = MAX_BUF_SIZE*i - 2*i;
-                                if (messageBytesOffset + MAX_BUF_SIZE - 2 < messageBytes.length) {
-                                    System.arraycopy(messageBytes, messageBytesOffset, messagePart, 2, MAX_BUF_SIZE - 2);
-                                }
-                                else {
-                                    System.arraycopy(messageBytes, messageBytesOffset, messagePart, 2, messageBytes.length - messageBytesOffset);
-                                }
-                                DatagramPacket segment = new DatagramPacket(messagePart, messagePart.length, address, SERVER_PORT);
-                                clientSocket.send(segment);
-                            }
-                        }
-                        else {
-                            byte[] sendBuffer = new byte[messageBytes.length + 2];
-                            sendBuffer[0] = (byte) (++seq);
-                            sendBuffer[1] = (byte) (++ack);
-                            System.arraycopy(messageBytes, 0, sendBuffer, 2, messageBytes.length);
+                        for (int i = 0; i <= commonSegment.getIterationCount(); i++) {
+
+                            //putting all fields together
+                            sendBuffer = commonSegment.convertDataToSegment(i);
+
                             DatagramPacket segment = new DatagramPacket(sendBuffer, sendBuffer.length, address, SERVER_PORT);
                             clientSocket.send(segment);
+                            logger.info("Client sent the message number " + seq);
                         }
-                        isSent = true;
+                        sendCount = 1;
 
-                        logger.info("Client sent the message number " + seq);
+                        isSent = true;
                     }
                     else {
-                        byte[] messageBytes = message.getBytes();
-                        byte[] sendBuffer = new byte[messageBytes.length + 2];
-                        sendBuffer[0] = (byte) seq;
-                        sendBuffer[1] = (byte) ack;
-                        System.arraycopy(messageBytes, 0, sendBuffer, 2, messageBytes.length);
+                        if (sendCount >= MAX_SENDING_AMOUNT) {
+                            logger.info("Too many tries to send the message. Client is closing connection");
+                            clientSocket.close();
+                        }
+                        else {
+                            sendCount++;
+                        }
+
+                        //resending the message
                         DatagramPacket segment = new DatagramPacket(sendBuffer, sendBuffer.length, address, SERVER_PORT);
                         clientSocket.send(segment);
 
@@ -108,15 +91,16 @@ public class Client {
                     Random random = new Random();
                     int randomNum = random.nextInt(5);
 
-                    ackSegment = new DatagramPacket(ackBytes, 0, ackBytes.length);
+                    ackPacket = new DatagramPacket(ackBytes, 0, ackBytes.length);
 
                     try {
                         clientSocket.setSoTimeout(TIMEOUT);
-                        clientSocket.receive(ackSegment);
+                        clientSocket.receive(ackPacket);
 
+                        //Don't receive ACK by random
                         if (randomNum != CONDITION_OF_FAILURE) {
                             logger.info("Client received the ack to message number " + seq);
-                            if (ackBytes[0] == seq) {
+                            if (ackBytes[ACK_POS] - 1 == seq) {
                                 isSent = false;
                             }
                         }
@@ -133,12 +117,8 @@ public class Client {
                 logger.info("Connection has not been established. Server sent wrong ack. Closing the app");
             }
         }
-        catch (IOException ex1) {
-            logger.info("Client is closing by timeout");
-        }
-        catch (Exception ex2) {
-            logger.error(ex2);
-            System.exit(ANOTHER_EXIT);
+        catch (Exception ex) {
+            logger.info("Client closed connection");
         }
     }
 }
