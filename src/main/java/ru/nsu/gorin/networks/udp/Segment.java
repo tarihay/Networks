@@ -4,6 +4,10 @@ import java.io.UnsupportedEncodingException;
 
 import static ru.nsu.gorin.networks.udp.Constants.*;
 
+/**
+ * Вспомогательный класс.
+ * Используется для удобной работы с сегментами UDP
+ */
 public class Segment {
     private int seq;
     private int ack;
@@ -13,6 +17,13 @@ public class Segment {
 
     private int iterationCount;
 
+    /**
+     * Конструктор класса segment.
+     * Используется в случае, когда размер пришедшего сообщения много больше MAX_BUFF_SIZE
+     * @param message пришедшее сообщение
+     * @param seq номер сообщения
+     * @param ack номер ack
+     */
     public Segment(String message, int seq, int ack) {
         this.seq = seq;
         this.ack = ack;
@@ -29,6 +40,12 @@ public class Segment {
         data = message.getBytes();
     }
 
+    /**
+     * Конструктор класса segment.
+     * Используется в случае, когда размер пришедшего сообщения не превосходит MAX_BUFF_SIZE
+     * @param messageData
+     * @throws UnsupportedEncodingException
+     */
     public Segment(byte[] messageData) throws UnsupportedEncodingException {
         seq = messageData[SEQ_POS];
         ack = messageData[ACK_POS];
@@ -39,6 +56,11 @@ public class Segment {
         message = new String(data, "UTF-8");
     }
 
+    /**
+     * Метод собирает байты сообщения, seq, ack в массив байтов, представляющий собой обычный сегмент
+     * @param i номер итерации в цикле. Не равен нулю в случае, когда размер пришедшего сообщения превосходит MAX_BUFF_SIZE
+     * @return Возвращает собранный массив байтов
+     */
     public byte[] convertDataToSegment(int i) {
         byte[] sendBuffer = new byte[MAX_BUF_SIZE];
 
@@ -56,6 +78,11 @@ public class Segment {
         return sendBuffer;
     }
 
+    /**
+     * Метод собирает seq и ack в массив байтов.
+     * Используется в основном при отправке ACK.
+     * @return Возвращает массив байт, содержащий seq и ack.
+     */
     public byte[] makeSimpleSegment() {
         byte[] sendBuffer = new byte[MAX_BUF_SIZE];
 
@@ -68,10 +95,6 @@ public class Segment {
 
     public int getIterationCount() {
         return iterationCount;
-    }
-
-    public int getMessageLength() {
-        return messageLength;
     }
 
     public int getSeq() {
